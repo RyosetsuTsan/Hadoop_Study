@@ -1,0 +1,124 @@
+package com;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Partitioner;
+import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+
+import java.io.IOException;
+/*
+ * VALUEIN:v1的类型 一行的文本数据 Text
+ * KEYOUT:k2的类型    每个单词     Text
+ * VALUEOUT:v2的类型  默认固定值1  LongWritable
+ */
+public class MAP{
+    //创建能够接收K,V的对象
+    static Text text=new Text();//String
+    static LongWritable num=new LongWritable();//long
+    public static class myMapper extends Mapper<LongWritable,Text,Text,LongWritable>{
+        /*
+     map方法是将k1_v1转换成k2_v2
+     K1  V1                k2      v2
+     0   hello,world   →   hello   1
+     11  hello,hadoop      word    1
+                           hello   1
+                           hadoop  1
+     key：是k1
+     value：是v1
+     context：表示mapreduce上下文对象
+     */
+        //重写map方法_输入map回车，删除super
+        @Override
+        protected void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
+            num.set(1);
+            //1，对每一行的数据进行字符串拆分
+            String line=value.toString();
+            String[] split=line.split(" ");
+            //2,遍历数组，获取每个单词
+            for (String word:split) {
+                text.set(word);
+                context.write(text,num);
+            }
+        }
+    }
+    public static class MyReduce extends Reducer<Text,LongWritable,Text,LongWritable> {
+        /*
+          KEYIN:K2    Text每个单词
+          VALUEIN:V2  LongWritable集合中泛型的类型
+          KEYOUT:K3   Text每个单词
+          VALUEOUT:V3 LongWritable每个单词出现的次数
+
+          reduce方法的作用是将新K2_V2转成K3_V3
+         新k2    v2           K3    V3
+         hello   <1,1>   →   hello  1
+         word    <1>         word   1
+         hadoop  <1>         hadoop 1
+
+        key：k2
+        values：集合
+        context：mapreduce的上下文对象，将mapreduce的各个阶段相连
+        */
+        @Override
+        protected void reduce(Text key, Iterable<LongWritable> values, Context context) throws IOException, InterruptedException {
+            long count=0;
+            //1、遍历values集合
+            for (LongWritable value:values){
+                //2、将集合中的值相加
+                count+=value.get();
+            }
+            //3、将k3和v3写入上下文中
+            num.set(count);
+            context.write(key,num);
+        }
+    }
+    public static class PartitionerOwn extends Partitioner<Text, LongWritable> {
+    /*
+        Text:K2
+        LongWritable:V2
+        i：reduce个数
+   */
+        @Override
+        public int getPartition(Text text, LongWritable longWritable, int i) {
+            //如果单词长度>=5，进入第一个分区→第一个reduceTask——reduce编号是0
+            if (text.toString().length()>=5) {
+                return 0;
+            }else{
+                //如果单词长度<5，进入第二个分区→第二个reduceTask——reduce编号是1
+                return 1;
+            }
+        }
+    }
+
+    public static void main(String[] args) throws Exception{
+        Configuration conf = new Configuration();//获取配置对象信息
+        // 创建一个任务对象
+        Job job = Job.getInstance(conf, "Mywordcount");//
+        job.setJarByClass(MAP.class);//设置job运行主类
+        //map
+        job.setMapperClass(myMapper.class);//设置mapper类
+        job.setMapOutputKeyClass(Text.class);//设置map阶段k的输出类型
+        job.setMapOutputValueClass(LongWritable.class);//设置map阶段v的输出类型
+        FileInputFormat.addInputPath(job, new Path(args[0]));//文件来源
+
+        //分区类
+        job.setPartitionerClass(PartitionerOwn.class);
+            //设置reduce的个数
+            job.setNumReduceTasks(2);
+
+        //排序，规约，分组
+
+        //reduce
+        job.setReducerClass(MyReduce.class);
+        job.setOutputKeyClass(Text.class);
+        job.setOutputValueClass(LongWritable.class);
+        FileOutputFormat.setOutputPath(job, new Path(args[1]));
+        //提交job，返回01
+        int ret= job.waitForCompletion(true)? 0 : 1;
+        System.exit(ret);
+    }
+}
